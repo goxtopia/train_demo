@@ -31,6 +31,7 @@ import com.zhuo.traindemo.model.TrainableHead
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,8 +66,15 @@ class MainActivity : AppCompatActivity() {
     private val featureHeight = 7
     private val featureWidth = 7
 
-    private val trainScope = CoroutineScope(Dispatchers.Default)
+    private val trainExecutor = Executors.newFixedThreadPool(4)
+    private val trainDispatcher = trainExecutor.asCoroutineDispatcher()
+    private val trainScope = CoroutineScope(trainDispatcher)
     private var trainingJob: Job? = null
+
+    // Store camera provider to unbind/bind preview
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var preview: Preview? = null
+    private var imageAnalyzer: ImageAnalysis? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -148,18 +156,18 @@ class MainActivity : AppCompatActivity() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
         cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
+            cameraProvider = cameraProviderFuture.get()
 
             val targetResolution = Size(640, 480)
 
-            val preview = Preview.Builder()
+            preview = Preview.Builder()
                 .setTargetResolution(targetResolution)
                 .build()
                 .also {
                     it.setSurfaceProvider(viewFinder.surfaceProvider)
                 }
 
-            val imageAnalyzer = ImageAnalysis.Builder()
+            imageAnalyzer = ImageAnalysis.Builder()
                 .setTargetResolution(targetResolution)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
@@ -169,18 +177,41 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageAnalyzer
-                )
-            } catch (exc: Exception) {
-                Log.e(TAG, "Use case binding failed", exc)
-            }
+            bindCameraUseCases()
 
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun bindCameraUseCases() {
+        val provider = cameraProvider ?: return
+        val selector = CameraSelector.DEFAULT_BACK_CAMERA
+
+        try {
+            provider.unbindAll()
+
+            val useCases = mutableListOf<androidx.camera.core.UseCase>()
+
+            // If analyzing (inference mode), bind everything (Preview + Analysis)
+            // If training, we stop preview to save resources, but we might want to stop analysis too?
+            // The request says "Stop Preview during training".
+            // Analysis is used for inference. During training we pause inference (isAnalyzing=false).
+            // So we can unbind both or just Preview.
+            // However, usually we unbind everything during heavy training if we don't need camera.
+
+            if (!isTraining) {
+                preview?.let { useCases.add(it) }
+                imageAnalyzer?.let { useCases.add(it) }
+            }
+
+            if (useCases.isNotEmpty()) {
+                provider.bindToLifecycle(
+                    this, selector, *useCases.toTypedArray()
+                )
+            }
+
+        } catch (exc: Exception) {
+            Log.e(TAG, "Use case binding failed", exc)
+        }
     }
 
     // Captured bitmap to be used for adding to dataset
@@ -266,6 +297,9 @@ class MainActivity : AppCompatActivity() {
         progressBar.max = 100
         progressBar.progress = 0
 
+        // Unbind camera
+        bindCameraUseCases()
+
         trainingJob = trainScope.launch {
             val batchSize = 16
             val epochs = 100
@@ -342,6 +376,9 @@ class MainActivity : AppCompatActivity() {
             modelManager.saveModel(it, classLabels)
             Toast.makeText(this, "Model Saved", Toast.LENGTH_SHORT).show()
         }
+
+        // Resume camera
+        bindCameraUseCases()
     }
 
     override fun onPause() {
