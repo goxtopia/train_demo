@@ -37,6 +37,14 @@ def export_model():
     )
     print("Model exported successfully.")
 
+    # Downgrade IR version for compatibility with ONNX Runtime 1.17.0
+    # The error message says "Unsupported model IR version: 10, max supported IR version: 9"
+    print("Downgrading IR version to 9...")
+    onnx_model = onnx.load(output_path)
+    onnx_model.ir_version = 9
+    onnx.save(onnx_model, output_path)
+    print("Model IR version updated.")
+
     # Verify the model
     onnx_model = onnx.load(output_path)
     onnx.checker.check_model(onnx_model)
