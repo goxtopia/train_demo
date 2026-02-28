@@ -21,7 +21,7 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
     private val beta1 = 0.9f
     private val beta2 = 0.999f
     private val epsilon = 1e-8f
-    private val dropoutRate = 0.5f // 50% dropout
+    private val dropoutRate = 0.3f // 50% dropout
     private val weightDecay = 0.05f // L2 regularization for AdamW
     private val maxGradNorm = 2.0f // Gradient clipping threshold
     private val random = Random()

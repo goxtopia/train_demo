@@ -294,7 +294,7 @@ class MainActivity : AppCompatActivity() {
         btnTrain.text = "Stop"
         btnCapture.isEnabled = false
         progressBar.visibility = View.VISIBLE
-        progressBar.max = 100
+        progressBar.max = 30
         progressBar.progress = 0
 
         // Unbind camera
@@ -302,7 +302,7 @@ class MainActivity : AppCompatActivity() {
 
         trainingJob = trainScope.launch {
             val batchSize = 16
-            val epochs = 100
+            val epochs = 30
             val initialLr = 0.001f
             val minLr = 0.00001f
 
