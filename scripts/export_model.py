@@ -22,10 +22,16 @@ def export_convnextv2():
         dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
     )
 
-    print("Downgrading IR version to 9...")
-    onnx_model = onnx.load(output_path)
+    print("Downgrading IR version to 9 and bundling data...")
+    onnx_model = onnx.load(output_path, load_external_data=True)
     onnx_model.ir_version = 9
-    onnx.save(onnx_model, output_path)
+    onnx.save(
+        onnx_model,
+        output_path,
+        save_as_external_data=False
+    )
+    if os.path.exists(output_path + ".data"):
+        os.remove(output_path + ".data")
 
 def export_yolov8n():
     from ultralytics import YOLO
@@ -60,10 +66,16 @@ def export_yolov8n():
         dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
     )
 
-    print("Downgrading IR version to 9 for YOLOv8n...")
-    onnx_model = onnx.load(output_path)
+    print("Downgrading IR version to 9 and bundling data for YOLOv8n...")
+    onnx_model = onnx.load(output_path, load_external_data=True)
     onnx_model.ir_version = 9
-    onnx.save(onnx_model, output_path)
+    onnx.save(
+        onnx_model,
+        output_path,
+        save_as_external_data=False
+    )
+    if os.path.exists(output_path + ".data"):
+        os.remove(output_path + ".data")
 
     # Now extract the fused weights from Layer 9 Conv + BN
     classify_layer = yolo_model.model.model[9]
