@@ -2,6 +2,8 @@ package com.zhuo.traindemo.model
 
 import android.graphics.Bitmap
 import android.content.Context
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.nio.FloatBuffer
 import java.util.Collections
@@ -18,8 +20,18 @@ class FeatureExtractor(context: Context, val useYolov8: Boolean = false) {
         env = OrtEnvironment.getEnvironment()
         // Load model from assets
         val modelName = if (useYolov8) "yolov8n_feature_extractor.onnx" else "feature_extractor.onnx"
-        val modelBytes = context.assets.open(modelName).readBytes()
-        session = env.createSession(modelBytes)
+
+        // Copy asset to cache dir to safely load via file path
+        val modelFile = File(context.cacheDir, modelName)
+        if (!modelFile.exists() || modelFile.length() == 0L) {
+            context.assets.open(modelName).use { inputStream ->
+                FileOutputStream(modelFile).use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+        }
+
+        session = env.createSession(modelFile.absolutePath)
     }
 
     fun extract(bitmap: Bitmap): FloatArray {
