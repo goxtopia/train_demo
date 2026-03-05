@@ -58,9 +58,11 @@ class PersistenceTest {
         val readHead = TrainableHead(inDim, numCls)
 
         val wSize = dis.readInt()
+        readHead.weights = FloatArray(wSize)
         for(i in 0 until wSize) readHead.weights[i] = dis.readFloat()
 
         val bSize = dis.readInt()
+        readHead.bias = FloatArray(bSize)
         for(i in 0 until bSize) readHead.bias[i] = dis.readFloat()
 
         val tStep = dis.readInt()

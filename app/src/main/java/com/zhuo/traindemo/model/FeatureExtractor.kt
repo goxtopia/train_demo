@@ -9,7 +9,7 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.OnnxTensor
 
-class FeatureExtractor(context: Context) {
+class FeatureExtractor(context: Context, val useYolov8: Boolean = false) {
 
     private val env: OrtEnvironment
     private val session: OrtSession
@@ -17,7 +17,8 @@ class FeatureExtractor(context: Context) {
     init {
         env = OrtEnvironment.getEnvironment()
         // Load model from assets
-        val modelBytes = context.assets.open("feature_extractor.onnx").readBytes()
+        val modelName = if (useYolov8) "yolov8n_feature_extractor.onnx" else "feature_extractor.onnx"
+        val modelBytes = context.assets.open(modelName).readBytes()
         session = env.createSession(modelBytes)
     }
 
@@ -35,10 +36,17 @@ class FeatureExtractor(context: Context) {
             val g = ((pixel shr 8) and 0xFF) / 255.0f
             val b = (pixel and 0xFF) / 255.0f
 
-            // Normalize (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            floatBuffer.put(i, (r - 0.485f) / 0.229f)
-            floatBuffer.put(224 * 224 + i, (g - 0.456f) / 0.224f)
-            floatBuffer.put(2 * 224 * 224 + i, (b - 0.406f) / 0.225f)
+            if (useYolov8) {
+                // YOLOv8n uses [0, 1] without ImageNet mean/std
+                floatBuffer.put(i, r)
+                floatBuffer.put(224 * 224 + i, g)
+                floatBuffer.put(2 * 224 * 224 + i, b)
+            } else {
+                // Normalize (mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                floatBuffer.put(i, (r - 0.485f) / 0.229f)
+                floatBuffer.put(224 * 224 + i, (g - 0.456f) / 0.224f)
+                floatBuffer.put(2 * 224 * 224 + i, (b - 0.406f) / 0.225f)
+            }
         }
         floatBuffer.rewind()
 

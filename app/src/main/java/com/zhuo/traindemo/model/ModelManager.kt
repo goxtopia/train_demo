@@ -10,6 +10,9 @@ class ModelManager(private val context: Context) {
 
     fun saveModel(head: TrainableHead, classLabels: List<String>) {
         DataOutputStream(modelFile.outputStream()).use { dos ->
+            // Version Byte: 0x01 indicates new format with Conv weights
+            dos.writeByte(0x01)
+
             // Save Class Labels
             dos.writeInt(classLabels.size)
             for (label in classLabels) {
@@ -18,6 +21,7 @@ class ModelManager(private val context: Context) {
             // Save Head Parameters
             dos.writeInt(head.inputDim)
             dos.writeInt(head.numClasses)
+            dos.writeInt(head.intermediateChannels)
 
             // Weights
             dos.writeInt(head.weights.size)
@@ -29,6 +33,18 @@ class ModelManager(private val context: Context) {
             for (b in head.bias) {
                 dos.writeFloat(b)
             }
+
+            // Conv Weights
+            dos.writeInt(head.convWeights.size)
+            for (w in head.convWeights) {
+                dos.writeFloat(w)
+            }
+            // Conv Bias
+            dos.writeInt(head.convBias.size)
+            for (b in head.convBias) {
+                dos.writeFloat(b)
+            }
+
             // Optimizer Step
             dos.writeInt(head.t)
         }
@@ -39,6 +55,12 @@ class ModelManager(private val context: Context) {
 
         try {
             DataInputStream(modelFile.inputStream()).use { dis ->
+                val version = dis.readByte().toInt()
+                if (version != 1) {
+                    // Unsupported or old format without version byte, discard.
+                    return null
+                }
+
                 // Load Class Labels
                 val numLabels = dis.readInt()
                 val labels = mutableListOf<String>()
@@ -49,13 +71,14 @@ class ModelManager(private val context: Context) {
                 // Load Head Parameters
                 val inputDim = dis.readInt()
                 val numClasses = dis.readInt()
+                val intermediateChannels = dis.readInt()
 
                 if (numClasses != numLabels) {
                     // Mismatch, maybe corrupted or logic error
                     return null
                 }
 
-                val head = TrainableHead(inputDim, numClasses)
+                val head = TrainableHead(inputDim, numClasses, intermediateChannels)
 
                 // Weights
                 val weightSize = dis.readInt()
@@ -71,7 +94,21 @@ class ModelManager(private val context: Context) {
                     head.bias[i] = dis.readFloat()
                 }
 
-                // Optimizer Step (try-catch for backward compatibility if file exists but shorter, though in this new project it shouldn't matter)
+                // Conv Weights
+                val convWeightSize = dis.readInt()
+                if (convWeightSize != head.convWeights.size) return null
+                for (i in 0 until convWeightSize) {
+                    head.convWeights[i] = dis.readFloat()
+                }
+
+                // Conv Bias
+                val convBiasSize = dis.readInt()
+                if (convBiasSize != head.convBias.size) return null
+                for (i in 0 until convBiasSize) {
+                    head.convBias[i] = dis.readFloat()
+                }
+
+                // Optimizer Step
                 try {
                     head.t = dis.readInt()
                 } catch (e: Exception) {

@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.Spinner
 import android.util.Size
@@ -48,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnAddClass: Button
     private lateinit var spinnerLabel: Spinner
     private lateinit var progressBar: ProgressBar
+    private lateinit var cbSemiUnfrozen: CheckBox
 
     private val dataset = Dataset()
     private lateinit var featureExtractor: FeatureExtractor
@@ -61,10 +63,12 @@ class MainActivity : AppCompatActivity() {
     private var isTraining = false
     private var isAnalyzing = true
 
-    // Model parameters
-    private val featureChannels = 320 // ConvNeXt Atto
+    // Model parameters (YOLOv8n-cls)
+    private val useYolov8 = true
+    private val featureChannels = 256
     private val featureHeight = 7
     private val featureWidth = 7
+    private val intermediateChannels = 1280
 
     private val trainExecutor = Executors.newFixedThreadPool(4)
     private val trainDispatcher = trainExecutor.asCoroutineDispatcher()
@@ -88,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         btnAddClass = findViewById(R.id.btnAddClass)
         spinnerLabel = findViewById(R.id.spinnerLabel)
         progressBar = findViewById(R.id.progressBar)
+        cbSemiUnfrozen = findViewById(R.id.cbSemiUnfrozen)
 
         // Initialize Spinner
         labelAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, classLabels)
@@ -96,7 +101,7 @@ class MainActivity : AppCompatActivity() {
 
         // Initialize Feature Extractor
         try {
-            featureExtractor = FeatureExtractor(this)
+            featureExtractor = FeatureExtractor(this, useYolov8)
             modelManager = ModelManager(this)
 
             // Try to load model
@@ -109,7 +114,8 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Loaded saved model", Toast.LENGTH_SHORT).show()
             } else {
                 // Initialize Head
-                trainableHead = TrainableHead(featureChannels, classLabels.size)
+                trainableHead = TrainableHead(featureChannels, classLabels.size, intermediateChannels)
+                loadPretrainedConvWeights()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing models", e)
@@ -238,7 +244,7 @@ class MainActivity : AppCompatActivity() {
             if (trainableHead != null && !isTraining) {
                 val features = featureExtractor.extract(rotatedBitmap)
                 // Head expects: input, batch, channels, h, w
-                val logits = trainableHead!!.forward(features, 1, featureChannels, featureHeight, featureWidth)
+                val logits = trainableHead!!.forward(features, 1, featureChannels, featureHeight, featureWidth, training = false, semiUnfrozen = cbSemiUnfrozen.isChecked)
 
                 // Argmax
                 var maxIdx = -1
@@ -337,6 +343,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 // Train step
+                val isSemiUnfrozen = cbSemiUnfrozen.isChecked
                 val loss = trainableHead!!.trainStep(
                     batchInput,
                     batchSize,
@@ -345,7 +352,8 @@ class MainActivity : AppCompatActivity() {
                     featureWidth,
                     batchTargets,
                     lr,
-                    labelSmoothing = 0.1f
+                    labelSmoothing = 0.1f,
+                    semiUnfrozen = isSemiUnfrozen
                 )
 
                 withContext(Dispatchers.Main) {
@@ -397,8 +405,34 @@ class MainActivity : AppCompatActivity() {
         // Re-initialize head to accommodate new class (naive approach: reset weights)
         // In a real app, we might want to keep existing weights or use a flexible head.
         // For this demo, we reset.
-        trainableHead = TrainableHead(featureChannels, classLabels.size)
+        trainableHead = TrainableHead(featureChannels, classLabels.size, intermediateChannels)
+        loadPretrainedConvWeights()
         Toast.makeText(this, "Added Class $newClassIndex. Model Reset.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun loadPretrainedConvWeights() {
+        if (!useYolov8) return
+        try {
+            val inputStream = assets.open("yolov8n_conv_weights.bin")
+            java.io.DataInputStream(inputStream).use { dis ->
+                val version = dis.readByte().toInt()
+                if (version == 1) {
+                    val wLen = dis.readInt()
+                    val bLen = dis.readInt()
+
+                    val w = FloatArray(wLen)
+                    for (i in 0 until wLen) w[i] = dis.readFloat()
+
+                    val b = FloatArray(bLen)
+                    for (i in 0 until bLen) b[i] = dis.readFloat()
+
+                    trainableHead?.loadConvWeights(w, b)
+                    Log.i(TAG, "Loaded pretrained YOLOv8n conv weights")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load pretrained conv weights", e)
+        }
     }
 
     companion object {
