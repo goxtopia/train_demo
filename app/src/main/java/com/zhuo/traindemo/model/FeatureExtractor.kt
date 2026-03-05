@@ -23,7 +23,18 @@ class FeatureExtractor(context: Context, val useYolov8: Boolean = false) {
 
         // Copy asset to cache dir to safely load via file path
         val modelFile = File(context.cacheDir, modelName)
-        if (!modelFile.exists() || modelFile.length() == 0L) {
+
+        var assetLength: Long = -1
+        try {
+            context.assets.openFd(modelName).use { afd ->
+                assetLength = afd.length
+            }
+        } catch (e: Exception) {
+            // If asset is compressed (which we disabled), openFd might fail.
+            // In that case, we can't easily check size, so we force copy if it doesn't exist.
+        }
+
+        if (!modelFile.exists() || modelFile.length() == 0L || (assetLength > 0 && modelFile.length() != assetLength)) {
             context.assets.open(modelName).use { inputStream ->
                 FileOutputStream(modelFile).use { outputStream ->
                     inputStream.copyTo(outputStream)
