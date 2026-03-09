@@ -117,7 +117,6 @@ class MainActivity : AppCompatActivity() {
 
         // Initialize Feature Extractor
         try {
-            currentBackbone = backboneTypes[spinnerBackbone.selectedItemPosition]
             featureExtractor = FeatureExtractor(this, currentBackbone.onnxAsset)
             modelManager = ModelManager(this)
 
