@@ -28,6 +28,10 @@ android {
             )
         }
     }
+    androidResources {
+        noCompress.add("onnx")
+        noCompress.add("bin")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11

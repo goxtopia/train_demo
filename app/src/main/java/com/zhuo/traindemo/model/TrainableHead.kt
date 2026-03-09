@@ -4,18 +4,39 @@ import com.zhuo.traindemo.math.MathUtils
 import java.util.Random
 import kotlin.math.sqrt
 
-class TrainableHead(val inputDim: Int, val numClasses: Int) {
+class TrainableHead(val inputDim: Int, val numClasses: Int, val intermediateChannels: Int = 1280) {
     // Weights: [inputDim, numClasses] (flattened)
-    var weights = FloatArray(inputDim * numClasses)
-    // Bias: [numClasses]
+    // Wait, if inputDim is the dimension BEFORE intermediateChannels, we need to clarify.
+    // For original mode, linear expects inputDim -> numClasses.
+    // For semi-unfrozen, linear expects intermediateChannels -> numClasses.
+    // We will initialize linear weights based on intermediateChannels if intermediateChannels > 0 and inputDim != intermediateChannels.
+    // However, it's easier to just assume inputDim is the input to the Linear layer if not semiUnfrozen.
+    // Actually, in semi-unfrozen YOLOv8n, input features are 256. intermediateChannels is 1280. Linear is 1280 -> numClasses.
+    // So linear input size should be intermediateChannels.
+    val linearInputSize = intermediateChannels
+
+    // Linear Head Parameters
+    var weights = FloatArray(linearInputSize * numClasses)
     var bias = FloatArray(numClasses)
 
-    // Adam optimizer state
+    // Adam optimizer state (Linear)
     private var mWeights = FloatArray(weights.size)
     private var vWeights = FloatArray(weights.size)
     private var mBias = FloatArray(bias.size)
     private var vBias = FloatArray(bias.size)
     var t = 0
+
+    // Semi-Unfrozen Parameters (1x1 Conv)
+    // Weights: [intermediateChannels, inputDim] for 1x1 Conv
+    // Bias: [intermediateChannels]
+    var convWeights = FloatArray(intermediateChannels * inputDim)
+    var convBias = FloatArray(intermediateChannels)
+
+    // Adam optimizer state (Conv)
+    private var mConvWeights = FloatArray(convWeights.size)
+    private var vConvWeights = FloatArray(convWeights.size)
+    private var mConvBias = FloatArray(convBias.size)
+    private var vConvBias = FloatArray(convBias.size)
 
     // Hyperparameters
     private val beta1 = 0.9f
@@ -27,12 +48,29 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
     private val random = Random()
 
     init {
-        // Xavier initialization
-        val limit = sqrt(6.0f / (inputDim + numClasses))
+        // Xavier initialization for Linear Head
+        val limit = sqrt(6.0f / (linearInputSize + numClasses))
         for (i in weights.indices) {
             weights[i] = (random.nextFloat() * 2 * limit - limit)
         }
         // Bias initialized to 0
+
+        // Xavier initialization for 1x1 Conv (if used without pretrained weights)
+        val convLimit = sqrt(6.0f / (inputDim + intermediateChannels))
+        for (i in convWeights.indices) {
+            convWeights[i] = (random.nextFloat() * 2 * convLimit - convLimit)
+        }
+    }
+
+    fun loadConvWeights(w: FloatArray, b: FloatArray) {
+        if (w.size == convWeights.size && b.size == convBias.size) {
+            System.arraycopy(w, 0, convWeights, 0, w.size)
+            System.arraycopy(b, 0, convBias, 0, b.size)
+        }
+    }
+
+    private fun sigmoid(x: Float): Float {
+        return 1.0f / (1.0f + kotlin.math.exp(-x))
     }
 
     /**
@@ -41,13 +79,41 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
      * Then Linear -> [Batch, NumClasses].
      * Returns: Logits [Batch, NumClasses] (flattened)
      */
-    fun forward(input: FloatArray, batchSize: Int, channels: Int, height: Int, width: Int, training: Boolean = false): FloatArray {
-        var gapOutput = globalAveragePool(input, batchSize, channels, height, width)
+    fun forward(input: FloatArray, batchSize: Int, channels: Int, height: Int, width: Int, training: Boolean = false, semiUnfrozen: Boolean = false): FloatArray {
+        var gapOutput: FloatArray
+        var actualChannels = channels
+
+        if (semiUnfrozen) {
+            // 1. 1x1 Conv
+            // Input: [Batch, channels, height, width]
+            // Output: [Batch, intermediateChannels, height, width]
+            val convOutput = FloatArray(batchSize * intermediateChannels * height * width)
+            val spatialSize = height * width
+            for (b in 0 until batchSize) {
+                for (oc in 0 until intermediateChannels) {
+                    val biasVal = convBias[oc]
+                    for (s in 0 until spatialSize) {
+                        var sum = biasVal
+                        for (ic in 0 until channels) {
+                            sum += input[b * channels * spatialSize + ic * spatialSize + s] * convWeights[oc * channels + ic]
+                        }
+                        // Apply SiLU: x * sigmoid(x)
+                        val sig = sigmoid(sum)
+                        convOutput[b * intermediateChannels * spatialSize + oc * spatialSize + s] = sum * sig
+                    }
+                }
+            }
+
+            // 2. GAP
+            gapOutput = globalAveragePool(convOutput, batchSize, intermediateChannels, height, width)
+            actualChannels = intermediateChannels
+        } else {
+            gapOutput = globalAveragePool(input, batchSize, channels, height, width)
+        }
 
         // Apply Dropout if training
         if (training) {
             // We apply dropout to the features after GAP (before Linear)
-            // Mask size: [Batch, Channels]
             for (i in gapOutput.indices) {
                 if (random.nextFloat() < dropoutRate) {
                     gapOutput[i] = 0f
@@ -62,8 +128,8 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
         for (b in 0 until batchSize) {
             for (c in 0 until numClasses) {
                 var sum = bias[c]
-                for (i in 0 until channels) {
-                    sum += gapOutput[b * channels + i] * weights[i * numClasses + c]
+                for (i in 0 until actualChannels) {
+                    sum += gapOutput[b * actualChannels + i] * weights[i * numClasses + c]
                 }
                 output[b * numClasses + c] = sum
             }
@@ -81,9 +147,42 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
      * Logits: Output of forward pass (before softmax) [Batch, NumClasses]
      * Targets: Class indices [Batch]
      */
-    fun trainStep(input: FloatArray, batchSize: Int, channels: Int, height: Int, width: Int, targets: IntArray, learningRate: Float, labelSmoothing: Float = 0.1f): Float {
-        // 1. GAP
-        var gapOutput = globalAveragePool(input, batchSize, channels, height, width)
+    fun trainStep(input: FloatArray, batchSize: Int, channels: Int, height: Int, width: Int, targets: IntArray, learningRate: Float, labelSmoothing: Float = 0.1f, semiUnfrozen: Boolean = false): Float {
+        var gapOutput: FloatArray
+        var actualChannels = channels
+        var convInputPreSiLU: FloatArray? = null
+        var convOutputPostSiLU: FloatArray? = null
+
+        val spatialSize = height * width
+
+        if (semiUnfrozen) {
+            // 1. 1x1 Conv Forward
+            convInputPreSiLU = FloatArray(batchSize * intermediateChannels * spatialSize)
+            convOutputPostSiLU = FloatArray(batchSize * intermediateChannels * spatialSize)
+
+            for (b in 0 until batchSize) {
+                for (oc in 0 until intermediateChannels) {
+                    val biasVal = convBias[oc]
+                    for (s in 0 until spatialSize) {
+                        var sum = biasVal
+                        for (ic in 0 until channels) {
+                            sum += input[b * channels * spatialSize + ic * spatialSize + s] * convWeights[oc * channels + ic]
+                        }
+                        convInputPreSiLU[b * intermediateChannels * spatialSize + oc * spatialSize + s] = sum
+                        // Apply SiLU
+                        val sig = sigmoid(sum)
+                        convOutputPostSiLU[b * intermediateChannels * spatialSize + oc * spatialSize + s] = sum * sig
+                    }
+                }
+            }
+
+            // 2. GAP
+            gapOutput = globalAveragePool(convOutputPostSiLU, batchSize, intermediateChannels, height, width)
+            actualChannels = intermediateChannels
+        } else {
+            // 1. GAP
+            gapOutput = globalAveragePool(input, batchSize, channels, height, width)
+        }
 
         // 2. Apply Dropout and store mask
         val dropoutMask = FloatArray(gapOutput.size)
@@ -102,8 +201,8 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
         for (b in 0 until batchSize) {
             for (c in 0 until numClasses) {
                 var sum = bias[c]
-                for (i in 0 until channels) {
-                    sum += gapOutput[b * channels + i] * weights[i * numClasses + c]
+                for (i in 0 until actualChannels) {
+                    sum += gapOutput[b * actualChannels + i] * weights[i * numClasses + c]
                 }
                 logits[b * numClasses + c] = sum
             }
@@ -155,17 +254,27 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
         }
 
         // dL/dWeights = GAP(input)^T * dL/dLogits
-        // GAP(input) here is the dropped-out version!
         val dWeights = FloatArray(weights.size)
-        // gapOutput is already dropped-out
+        // dL/dGap = dL/dLogits * Weights^T
+        val dGap = FloatArray(gapOutput.size)
 
-        for (i in 0 until channels) {
+        for (i in 0 until actualChannels) {
             for (j in 0 until numClasses) {
                 var sum = 0f
                 for (b in 0 until batchSize) {
-                    sum += gapOutput[b * channels + i] * dLogits[b * numClasses + j]
+                    sum += gapOutput[b * actualChannels + i] * dLogits[b * numClasses + j]
                 }
                 dWeights[i * numClasses + j] = sum
+            }
+        }
+
+        for (b in 0 until batchSize) {
+            for (i in 0 until actualChannels) {
+                var sum = 0f
+                for (j in 0 until numClasses) {
+                    sum += dLogits[b * numClasses + j] * weights[i * numClasses + j]
+                }
+                dGap[b * actualChannels + i] = sum * dropoutMask[b * actualChannels + i] // backprop through dropout
             }
         }
 
@@ -179,10 +288,55 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
             dBias[j] = sum
         }
 
+        val dConvWeights = FloatArray(convWeights.size)
+        val dConvBias = FloatArray(convBias.size)
+
+        if (semiUnfrozen && convInputPreSiLU != null) {
+            // Backprop through GAP
+            // dL/dConvOutput = dL/dGap / spatialSize
+            val dConvOutput = FloatArray(batchSize * intermediateChannels * spatialSize)
+            for (b in 0 until batchSize) {
+                for (oc in 0 until intermediateChannels) {
+                    val grad = dGap[b * intermediateChannels + oc] / spatialSize
+                    for (s in 0 until spatialSize) {
+                        dConvOutput[b * intermediateChannels * spatialSize + oc * spatialSize + s] = grad
+                    }
+                }
+            }
+
+            // Backprop through SiLU
+            // dSiLU = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+            for (i in dConvOutput.indices) {
+                val x = convInputPreSiLU[i]
+                val sig = sigmoid(x)
+                val dSilu = sig + x * sig * (1.0f - sig)
+                dConvOutput[i] *= dSilu
+            }
+
+            // Backprop through 1x1 Conv
+            // dL/dConvWeight = sum(dL/dConvOutput * input)
+            // dL/dConvBias = sum(dL/dConvOutput)
+            for (b in 0 until batchSize) {
+                for (oc in 0 until intermediateChannels) {
+                    for (s in 0 until spatialSize) {
+                        val grad = dConvOutput[b * intermediateChannels * spatialSize + oc * spatialSize + s]
+                        dConvBias[oc] += grad
+                        for (ic in 0 until channels) {
+                            dConvWeights[oc * channels + ic] += grad * input[b * channels * spatialSize + ic * spatialSize + s]
+                        }
+                    }
+                }
+            }
+        }
+
         // Gradient Clipping (L2 Norm)
         var globalNormSq = 0f
         for(g in dWeights) globalNormSq += g*g
         for(g in dBias) globalNormSq += g*g
+        if (semiUnfrozen) {
+            for(g in dConvWeights) globalNormSq += g*g
+            for(g in dConvBias) globalNormSq += g*g
+        }
         val globalNorm = kotlin.math.sqrt(globalNormSq)
 
         // If global norm is greater than threshold, clip gradients
@@ -190,13 +344,20 @@ class TrainableHead(val inputDim: Int, val numClasses: Int) {
             val scale = maxGradNorm / (globalNorm + 1e-6f) // Add epsilon to avoid div by zero
             for(i in dWeights.indices) dWeights[i] *= scale
             for(i in dBias.indices) dBias[i] *= scale
+            if (semiUnfrozen) {
+                for(i in dConvWeights.indices) dConvWeights[i] *= scale
+                for(i in dConvBias.indices) dConvBias[i] *= scale
+            }
         }
 
         // 6. Update (AdamW)
         t++
-        // AdamW: Decay weights before Adam update, but only if applyDecay is true
         adamWUpdate(weights, dWeights, mWeights, vWeights, learningRate, applyDecay = true)
-        adamWUpdate(bias, dBias, mBias, vBias, learningRate, applyDecay = false) // Usually no weight decay on bias
+        adamWUpdate(bias, dBias, mBias, vBias, learningRate, applyDecay = false)
+        if (semiUnfrozen) {
+            adamWUpdate(convWeights, dConvWeights, mConvWeights, vConvWeights, learningRate, applyDecay = true)
+            adamWUpdate(convBias, dConvBias, mConvBias, vConvBias, learningRate, applyDecay = false)
+        }
 
         return totalLoss / batchSize
     }
