@@ -3,6 +3,9 @@ import torch.nn as nn
 import onnx
 import os
 
+# Max IR version supported by ONNX Runtime 1.17.0
+TARGET_IR_VERSION = 9
+
 def export_model():
     from ultralytics import YOLO
 
@@ -57,9 +60,9 @@ def export_model():
     print("Model exported successfully.")
 
     # Downgrade IR version for compatibility with ONNX Runtime 1.17.0
-    print("Downgrading IR version to 9...")
+    print("Downgrading IR version to %d..." % TARGET_IR_VERSION)
     onnx_model = onnx.load(output_path)
-    onnx_model.ir_version = 9
+    onnx_model.ir_version = TARGET_IR_VERSION
 
     # Save as a single file without external data
     onnx.save(onnx_model, output_path)
@@ -69,8 +72,7 @@ def export_model():
     if os.path.exists(data_file):
         print("Re-saving model without external data...")
         onnx_model = onnx.load(output_path, load_external_data=True)
-        onnx_model.ir_version = 9
-        from onnx.external_data_helper import convert_model_to_external_data
+        onnx_model.ir_version = TARGET_IR_VERSION
         # Clear external data references and internalize all tensors
         for tensor in onnx_model.graph.initializer:
             tensor.ClearField('data_location')
