@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var spinnerTrainMode: Spinner
     private lateinit var spinnerBackbone: Spinner
     private lateinit var progressBar: ProgressBar
+    private lateinit var cropBox: View
 
     private val dataset = Dataset()
     private lateinit var featureExtractor: FeatureExtractor
@@ -96,6 +97,7 @@ class MainActivity : AppCompatActivity() {
         spinnerTrainMode = findViewById(R.id.spinnerTrainMode)
         spinnerBackbone = findViewById(R.id.spinnerBackbone)
         progressBar = findViewById(R.id.progressBar)
+        cropBox = findViewById(R.id.cropBox)
 
         // Initialize Label Spinner
         labelAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, classLabels)
@@ -269,14 +271,68 @@ class MainActivity : AppCompatActivity() {
         matrix.postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
         val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 
-        currentBitmap = rotatedBitmap
+        // Calculate crop area
+        val viewFinderWidth = viewFinder.width.toFloat()
+        val viewFinderHeight = viewFinder.height.toFloat()
+
+        // Skip if view is not ready
+        if (viewFinderWidth <= 0 || viewFinderHeight <= 0) {
+            imageProxy.close()
+            return
+        }
+
+        val cropBoxWidth = cropBox.width.toFloat()
+        val cropBoxHeight = cropBox.height.toFloat()
+
+        // Ensure cropBox dimensions are valid
+        if (cropBoxWidth <= 0 || cropBoxHeight <= 0) {
+            imageProxy.close()
+            return
+        }
+
+        // Calculate scaling factors between original image and the preview finder
+        // CameraX maps the image to the PreviewView
+        // We use FILL_CENTER scale type (default) so the image might be cropped to fit viewFinder
+
+        val scaleX = rotatedBitmap.width / viewFinderWidth
+        val scaleY = rotatedBitmap.height / viewFinderHeight
+
+        val scale = kotlin.math.max(scaleX, scaleY)
+
+        val imageCenterX = rotatedBitmap.width / 2f
+        val imageCenterY = rotatedBitmap.height / 2f
+
+        val cropWidthInImage = cropBoxWidth * scale
+        val cropHeightInImage = cropBoxHeight * scale
+
+        val cropLeft = kotlin.math.max(0f, imageCenterX - cropWidthInImage / 2f).toInt()
+        val cropTop = kotlin.math.max(0f, imageCenterY - cropHeightInImage / 2f).toInt()
+
+        var actualCropWidth = cropWidthInImage.toInt()
+        var actualCropHeight = cropHeightInImage.toInt()
+
+        if (cropLeft + actualCropWidth > rotatedBitmap.width) {
+            actualCropWidth = rotatedBitmap.width - cropLeft
+        }
+
+        if (cropTop + actualCropHeight > rotatedBitmap.height) {
+            actualCropHeight = rotatedBitmap.height - cropTop
+        }
+
+        val croppedBitmap = if (actualCropWidth > 0 && actualCropHeight > 0) {
+             Bitmap.createBitmap(rotatedBitmap, cropLeft, cropTop, actualCropWidth, actualCropHeight)
+        } else {
+             rotatedBitmap
+        }
+
+        currentBitmap = croppedBitmap
 
         // Inference logic (2fps limit roughly controlled by analysis time)
         val startTime = System.currentTimeMillis()
 
         try {
             if (trainableClassifier != null && !isTraining) {
-                val features = featureExtractor.extract(rotatedBitmap)
+                val features = featureExtractor.extract(croppedBitmap)
                 // Classifier expects: backboneFeatures, batch, height, width
                 val logits = trainableClassifier!!.forward(features, 1, currentBackbone.featureHeight, currentBackbone.featureWidth)
 
