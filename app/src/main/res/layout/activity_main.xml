@@ -15,12 +15,31 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Crop Box overlay over viewFinder -->
+    <!-- It takes 33% of the screen width and height (roughly 1/3) -->
+    <!-- To make it square, we can use app:layout_constraintDimensionRatio="1:1"
+         and make it 33% of parent width. Let's make it a bit larger for usability, like 50% width,
+         but the user asked for 1/3, let's stick to 1/3 of min(width, height)
+         Using app:layout_constraintWidth_percent="0.4"
+         and dimensionRatio="1:1" to keep it a square. -->
+    <View
+        android:id="@+id/cropBox"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@drawable/crop_box_bg"
+        app:layout_constraintDimensionRatio="1:1"
+        app:layout_constraintWidth_percent="0.4"
+        app:layout_constraintBottom_toTopOf="@+id/guideline"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/guideline"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        app:layout_constraintGuide_percent="0.55" />
+        app:layout_constraintGuide_percent="0.5" />
 
     <ProgressBar
         android:id="@+id/progressBar"
@@ -36,14 +55,25 @@
         app:layout_constraintTop_toTopOf="@+id/guideline"
         tools:visibility="visible" />
 
-    <ImageView
-        android:id="@+id/imgPreview"
+    <!-- Moved ImagePreview into a CardView for beautification -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/imgPreviewCard"
         android:layout_width="80dp"
         android:layout_height="80dp"
         android:layout_margin="16dp"
-        android:background="#CCCCCC"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="2dp"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/progressBar" />
+        app:layout_constraintTop_toBottomOf="@+id/progressBar">
+
+        <ImageView
+            android:id="@+id/imgPreview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#E0E0E0"
+            android:scaleType="centerCrop" />
+
+    </com.google.android.material.card.MaterialCardView>
 
     <TextView
         android:id="@+id/txtStatus"
@@ -54,90 +84,101 @@
         android:textSize="14sp"
         android:maxLines="2"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toEndOf="@+id/imgPreview"
+        app:layout_constraintStart_toEndOf="@+id/imgPreviewCard"
         app:layout_constraintTop_toBottomOf="@+id/progressBar" />
 
-    <LinearLayout
+    <com.google.android.material.card.MaterialCardView
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:orientation="vertical"
-        android:padding="16dp"
-        android:gravity="center_horizontal"
+        android:layout_margin="16dp"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="4dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/imgPreview">
+        app:layout_constraintTop_toBottomOf="@+id/imgPreviewCard">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center">
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:gravity="center_horizontal|bottom">
 
-            <Spinner
-                android:id="@+id/spinnerLabel"
-                android:layout_width="0dp"
-                android:layout_weight="1"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minHeight="48dp" />
+                android:orientation="horizontal"
+                android:gravity="center">
 
-            <Button
-                android:id="@+id/btnCapture"
-                android:layout_width="wrap_content"
+                <Spinner
+                    android:id="@+id/spinnerLabel"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCapture"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="8dp"
+                    android:text="Capture" />
+            </LinearLayout>
+
+            <Space
+                android:layout_width="match_parent"
+                android:layout_height="8dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Capture" />
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <Spinner
+                    android:id="@+id/spinnerTrainMode"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+
+                <Spinner
+                    android:id="@+id/spinnerBackbone"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+            </LinearLayout>
+
+            <Space
+                android:layout_width="match_parent"
+                android:layout_height="8dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAddClass"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="8dp"
+                    android:text="New Class" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTrain"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="8dp"
+                    android:text="Train" />
+            </LinearLayout>
+
         </LinearLayout>
 
-        <Space
-            android:layout_width="match_parent"
-            android:layout_height="16dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center">
-
-            <Spinner
-                android:id="@+id/spinnerTrainMode"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp" />
-
-            <Spinner
-                android:id="@+id/spinnerBackbone"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp" />
-        </LinearLayout>
-
-        <Space
-            android:layout_width="match_parent"
-            android:layout_height="8dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center">
-
-            <Button
-                android:id="@+id/btnAddClass"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="New Class"
-                android:layout_marginEnd="8dp"/>
-
-            <Button
-                android:id="@+id/btnTrain"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Train"
-                android:layout_marginStart="8dp"/>
-        </LinearLayout>
-
-    </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
